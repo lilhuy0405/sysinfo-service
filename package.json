@@ -18,6 +18,7 @@
     "typescript": "^4.8.4"
   },
   "dependencies": {
+    "@kubernetes/client-node": "^0.20.0",
     "dotenv": "^16.0.3",
     "systeminformation": "^5.22.0"
   }
