@@ -1,27 +1,30 @@
 import * as si from 'systeminformation';
 import * as k8s from '@kubernetes/client-node';
+import * as express from 'express';
+import * as cors from 'cors';
+import mqtt from 'mqtt';
 
 async function getSysInfo() {
   try {
     // CPU usage
     const cpuLoad = await si.currentLoad();
-    console.log(`CPU Usage: ${cpuLoad.currentLoad.toFixed(2)}%`);
-
     // Memory usage
     const memUsage = await si.mem();
     const usedMemoryPercentage = (memUsage.active / memUsage.total) * 100;
-    console.log(`Memory Usage: ${usedMemoryPercentage.toFixed(2)}%`);
-
     // Disk usage
     const diskUsage = await si.fsSize();
-    console.log(`Disk (${diskUsage[0].fs}): ${diskUsage[0].use.toFixed(2)}% used`);
-
     // CPU temperature
     const cpuTemp = await si.cpuTemperature();
-    console.log(`CPU Temperature: ${cpuTemp.main}°C`);
+    return {
+      cpuLoad: cpuLoad.currentLoad.toFixed(2),
+      memoryUsage: usedMemoryPercentage.toFixed(2),
+      diskUsage: diskUsage[0].use.toFixed(2),
+      cpuTemperature: cpuTemp.main
+    }
 
   } catch (error) {
     console.error(`Error getting system info: ${error}`);
+    return null;
   }
 }
 
@@ -49,16 +52,70 @@ const getK8sInfo = async () => {
       const pods = await k8sApi.listNamespacedPod(ns);
       totalPods += pods.body.items.length;
     }
-    console.log("Total pods: ", totalPods);
+    return totalPods;
   } catch (error) {
     console.error(`Error getting k8s info: ${error}`);
+    return null;
   }
 }
 
-const main = async () => {
-  await getSysInfo();
-  await getK8sInfo();
-}
 
-// setInterval(main, 3000);
-main().then();
+const app = express()
+app.use(cors())
+app.use(express.json())
+app.get('/', async (req: any, res: any) => {
+  const pods = await getK8sInfo();
+  if (!pods) {
+    res.status(500).json({
+      message: 'Error getting pods'
+    })
+  }
+  const sysInfo = await getSysInfo();
+  if (!sysInfo) {
+    res.status(500).json({
+      message: 'Error getting system info'
+    })
+  }
+  res.status(200).json({
+    message: 'Success',
+    totalPods: pods,
+    ...sysInfo
+  })
+})
+
+app.listen(3001, () => {
+  console.log(`monitor app listening on port 3001`)
+})
+//send  system info every 10s via mqtt
+
+
+const protocol = 'mqtt'
+const host = '192.168.90.45'
+const port = '1883'
+const clientId = `mqtt_${Math.random().toString(16).slice(3)}`
+
+const connectUrl = `${protocol}://${host}:${port}`
+
+const client = mqtt.connect(connectUrl, {
+  clientId,
+  clean: true,
+  connectTimeout: 4000,
+  username: 'admin',
+  password: 'luuduchuy2001',
+  reconnectPeriod: 1000,
+})
+
+const topic = '/system-info'
+client.on('connect', () => {
+  setInterval(async () => {
+    const sysInfo = await getSysInfo();
+    const message = JSON.stringify(sysInfo);
+    client.publish(topic, message, {qos: 0, retain: false}, (error) => {
+      if (error) {
+        console.error(error)
+      } else {
+        console.log('Published message successfully')
+      }
+    })
+  }, 2_000)
+})
